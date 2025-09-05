@@ -235,8 +235,15 @@ def plot_spectrogram_to_numpy(spectrogram):
     plt.tight_layout()
 
     fig.canvas.draw()
-    data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep="")
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    # 兼容新版本matplotlib，tostring_rgb()已被弃用
+    try:
+        # 新版本matplotlib使用buffer_rgba()方法
+        buf = fig.canvas.buffer_rgba()
+        data = np.asarray(buf)[:, :, :3]  # 只取RGB通道，去掉Alpha通道
+    except AttributeError:
+        # 旧版本matplotlib使用tostring_rgb()方法
+        data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep="")
+        data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
     plt.close()
     return data
 
