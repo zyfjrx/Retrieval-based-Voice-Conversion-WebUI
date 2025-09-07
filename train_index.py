@@ -14,16 +14,28 @@ import numpy as np
 import faiss
 from sklearn.cluster import MiniBatchKMeans
 from dotenv import load_dotenv
+from multiprocessing import cpu_count
 
 # 设置工作目录和路径
 now_dir = os.getcwd()
 sys.path.append(now_dir)
 load_dotenv()
 
-# 导入配置
-from configs.config import Config
+def get_n_cpu(n_cpu=None):
+    """
+    获取CPU核心数
+    
+    Args:
+        n_cpu: 指定的CPU核心数，如果为None或0则自动检测
+    
+    Returns:
+        int: CPU核心数
+    """
+    if n_cpu is None or n_cpu == 0:
+        return cpu_count()
+    return n_cpu
 
-def train_index(exp_dir1, version19="v2", outside_index_root=None):
+def train_index(exp_dir1, version19="v2", outside_index_root=None, n_cpu=None):
     """
     训练特征索引
     
@@ -31,8 +43,12 @@ def train_index(exp_dir1, version19="v2", outside_index_root=None):
         exp_dir1: 实验目录名称
         version19: 模型版本 ("v1" 或 "v2")
         outside_index_root: 外部索引根目录
+        n_cpu: CPU核心数，如果为None则自动检测
     """
-    config = Config()
+    
+    # 获取CPU核心数
+    actual_n_cpu = get_n_cpu(n_cpu)
+    print(f"使用CPU核心数: {actual_n_cpu}")
     
     # 设置实验目录
     exp_dir = "logs/%s" % exp_dir1
@@ -81,7 +97,7 @@ def train_index(exp_dir1, version19="v2", outside_index_root=None):
                 MiniBatchKMeans(
                     n_clusters=10000,
                     verbose=True,
-                    batch_size=256 * config.n_cpu,
+                    batch_size=256 * actual_n_cpu,
                     compute_labels=False,
                     init="random",
                 )
@@ -134,28 +150,28 @@ def train_index(exp_dir1, version19="v2", outside_index_root=None):
     print(f"成功构建索引: {final_index_path}")
     
     # 尝试链接到外部索引目录
-    if outside_index_root and os.path.exists(outside_index_root):
-        try:
-            link = os.link if platform.system() == "Windows" else os.symlink
-            external_index_path = (
-                "%s/%s_IVF%s_Flat_nprobe_%s_%s_%s.index"
-                % (
-                    outside_index_root,
-                    exp_dir1,
-                    n_ivf,
-                    index_ivf.nprobe,
-                    exp_dir1,
-                    version19,
-                )
+    # if outside_index_root and os.path.exists(outside_index_root):
+    try:
+        link = os.link if platform.system() == "Windows" else os.symlink
+        external_index_path = (
+            "%s/%s_IVF%s_Flat_nprobe_%s_%s_%s.index"
+            % (
+                outside_index_root,
+                exp_dir1,
+                n_ivf,
+                index_ivf.nprobe,
+                exp_dir1,
+                version19,
+            )
             )
             # 如果目标文件已存在，先删除
-            if os.path.exists(external_index_path):
-                os.remove(external_index_path)
+        if os.path.exists(external_index_path):
+            os.remove(external_index_path)
             
-            link(final_index_path, external_index_path)
-            print(f"成功链接索引到外部目录: {external_index_path}")
-        except Exception as e:
-            print(f"链接索引到外部目录失败: {e}")
+        link(final_index_path, external_index_path)
+        print(f"成功链接索引到外部目录: {external_index_path}")
+    except Exception as e:
+        print(f"链接索引到外部目录失败: {e}")
     
     print("索引训练完成！")
     return True
@@ -165,6 +181,7 @@ def main():
     parser.add_argument("-e", "--exp_dir", required=True, help="实验目录名称")
     parser.add_argument("-v", "--version", default="v2", choices=["v1", "v2"], help="模型版本")
     parser.add_argument("-o", "--outside_index_root", help="外部索引根目录")
+    parser.add_argument("-c", "--n_cpu", type=int, help="CPU核心数，如果不指定则自动检测")
     
     args = parser.parse_args()
     
@@ -174,8 +191,12 @@ def main():
     print(f"实验目录: {args.exp_dir}")
     print(f"模型版本: {args.version}")
     print(f"外部索引目录: {outside_index_root or '未设置'}")
+    if args.n_cpu:
+        print(f"指定CPU核心数: {args.n_cpu}")
+    else:
+        print("CPU核心数: 自动检测")
     
-    success = train_index(args.exp_dir, args.version, outside_index_root)
+    success = train_index(args.exp_dir, args.version, outside_index_root, args.n_cpu)
     
     if success:
         print("\n索引训练成功完成！")
