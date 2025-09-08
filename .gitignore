@@ -27,3 +27,5 @@ rmvpe.pt
 ffmpeg.*
 ffprobe.*
 *.log
+input/*
+output/*
