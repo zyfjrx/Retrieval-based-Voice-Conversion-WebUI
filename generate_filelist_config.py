@@ -1,13 +1,23 @@
 import os
 import argparse
 from random import shuffle
-
+import json  # 添加 json 导入用于配置生成
+import pathlib  # 添加 pathlib 导入用于路径检查
+import shutil  # 添加 shutil 导入
+# 版本配置列表
+version_config_list = [
+    "v1/32k.json",
+    "v1/40k.json",
+    "v1/48k.json",
+    "v2/48k.json",
+    "v2/32k.json",
+]
 def generate_filelist(exp_dir, version="v2", if_f0=True, spk_id=0, sr="40k"):
     """
     生成训练用的filelist.txt文件 (使用绝对路径)
     
     Args:
-        exp_dir: 实验目录路径 (例如: "logs/leijun1")
+        exp_dir: 实验目录名称 (例如: "leijun25min") 或完整路径 (例如: "logs/leijun25min")
         version: 模型版本 ("v1" 或 "v2")
         if_f0: 是否使用F0 (True/False)
         spk_id: 说话人ID (默认0)
@@ -17,9 +27,15 @@ def generate_filelist(exp_dir, version="v2", if_f0=True, spk_id=0, sr="40k"):
     # 获取当前工作目录的绝对路径
     current_dir = os.path.abspath(os.getcwd())
     
-    # 转换为绝对路径
+    # 智能处理实验目录路径
     if not os.path.isabs(exp_dir):
-        exp_dir = os.path.abspath(exp_dir)
+        # 如果不是绝对路径，检查是否已经包含 logs/ 前缀
+        if exp_dir.startswith("logs/"):
+            # 已经包含 logs/ 前缀，直接使用
+            exp_dir = os.path.abspath(exp_dir)
+        else:
+            # 没有 logs/ 前缀，自动添加
+            exp_dir = os.path.abspath(os.path.join(current_dir, "logs", exp_dir))
     
     # 确保实验目录存在
     if not os.path.exists(exp_dir):
@@ -113,9 +129,106 @@ def generate_filelist(exp_dir, version="v2", if_f0=True, spk_id=0, sr="40k"):
     
     return True
 
+def load_config_json():
+    """
+    加载所有配置文件到字典中
+    """
+    d = {}
+    # 获取项目根目录 - 修正路径计算
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    
+    for config_file in version_config_list:
+        # 构建配置文件路径
+        config_source_path = os.path.join(project_root, "configs", config_file)
+        config_inuse_path = os.path.join(project_root, "configs", "inuse", config_file)
+        
+        # 确保 inuse 目录存在
+        inuse_dir = os.path.dirname(config_inuse_path)
+        os.makedirs(inuse_dir, exist_ok=True)
+        
+        # 如果 inuse 中不存在配置文件，从原始位置复制
+        if not os.path.exists(config_inuse_path):
+            if os.path.exists(config_source_path):
+                shutil.copy(config_source_path, config_inuse_path)
+            else:
+                print(f"警告: 配置文件 {config_source_path} 不存在")
+                continue
+        
+        # 读取配置文件
+        try:
+            with open(config_inuse_path, "r", encoding="utf-8") as f:
+                d[config_file] = json.load(f)
+        except Exception as e:
+            print(f"错误: 无法读取配置文件 {config_inuse_path}: {e}")
+            continue
+    
+    return d
+
+def generate_config(exp_dir, version="v2", sr="40k"):
+    """
+    生成训练配置文件 config.json
+    
+    Args:
+        exp_dir: 实验目录路径
+        version: 模型版本 ("v1" 或 "v2")
+        sr: 采样率 ("32k", "40k", "48k")
+    """
+    # 加载配置文件
+    json_config = load_config_json()
+    
+    # 确定配置文件路径
+    if version == "v1" or sr == "40k":
+        config_path = f"v1/{sr}.json"
+    else:
+        config_path = f"v2/{sr}.json"
+    
+    # 检查配置是否存在
+    if config_path not in json_config:
+        print(f"❌ 错误: 配置文件 {config_path} 不存在")
+        return False
+    
+    # 确保实验目录存在
+    if not os.path.isabs(exp_dir):
+        if exp_dir.startswith("logs/"):
+            exp_dir = os.path.abspath(exp_dir)
+        else:
+            exp_dir = os.path.abspath(os.path.join(os.getcwd(), "logs", exp_dir))
+    
+    # 配置文件保存路径
+    config_save_path = os.path.join(exp_dir, "config.json")
+    
+    # 检查配置文件是否已存在
+    if not pathlib.Path(config_save_path).exists():
+        try:
+            # 创建目录（如果不存在）
+            os.makedirs(exp_dir, exist_ok=True)
+            
+            # 写入配置文件
+            with open(config_save_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    json_config[config_path],
+                    f,
+                    ensure_ascii=False,
+                    indent=4,
+                    sort_keys=True,
+                )
+                f.write("\n")
+            
+            print(f"✅ 成功生成配置文件: {config_save_path}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ 生成配置文件失败: {e}")
+            return False
+    else:
+        print(f"ℹ️  配置文件已存在: {config_save_path}")
+        return True
+
+
+
 def main():
     parser = argparse.ArgumentParser(description="生成RVC训练用的filelist.txt文件 (绝对路径版本)")
-    parser.add_argument("-e", "--exp_dir", type=str, required=True, help="实验目录路径 (例如: logs/leijun1)")
+    parser.add_argument("-e", "--exp_dir", type=str, required=True, help="实验目录名称 (例如: leijun25min) 或完整路径 (例如: logs/leijun25min)")
     parser.add_argument("-v", "--version", type=str, default="v2", choices=["v1", "v2"], help="模型版本 (默认: v2)")
     parser.add_argument("-f0", "--if_f0", type=int, default=1, choices=[0, 1], help="是否使用F0 (1=是, 0=否, 默认: 1)")
     parser.add_argument("-s", "--spk_id", type=int, default=0, help="说话人ID (默认: 0)")
@@ -124,7 +237,17 @@ def main():
     args = parser.parse_args()
     
     print(f"当前工作目录: {os.path.abspath(os.getcwd())}")
-    print(f"实验目录: {os.path.abspath(args.exp_dir)}")
+    
+    # 显示处理后的实验目录路径
+    if not os.path.isabs(args.exp_dir):
+        if args.exp_dir.startswith("logs/"):
+            processed_exp_dir = os.path.abspath(args.exp_dir)
+        else:
+            processed_exp_dir = os.path.abspath(os.path.join(os.getcwd(), "logs", args.exp_dir))
+    else:
+        processed_exp_dir = args.exp_dir
+    
+    print(f"实验目录: {processed_exp_dir}")
     print(f"参数: version={args.version}, f0={bool(args.if_f0)}, spk_id={args.spk_id}, sr={args.sample_rate}")
     print("-" * 60)
     
@@ -136,11 +259,21 @@ def main():
         sr=args.sample_rate
     )
     
+    
+    
     if success:
         print("\n✅ filelist.txt 生成完成! (使用绝对路径)")
     else:
         print("\n❌ filelist.txt 生成失败!")
-        exit(1)
+    
+    # 生成配置文件
+    generate_config(
+        exp_dir=args.exp_dir,
+        version=args.version,
+        sr=args.sample_rate
+    )
+
+    
 
 if __name__ == "__main__":
     main()

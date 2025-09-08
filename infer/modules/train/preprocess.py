@@ -11,6 +11,13 @@ inp_root = sys.argv[1]
 sr = int(sys.argv[2])
 n_p = int(sys.argv[3])
 exp_dir = sys.argv[4]
+
+# 检查并创建实验目录
+if not os.path.exists(exp_dir):
+    os.makedirs(exp_dir, exist_ok=True)
+    print(f"Created experiment directory: {exp_dir}")
+else:
+    print(f"Experiment directory already exists: {exp_dir}")
 noparallel = sys.argv[5] == "True"
 per = float(sys.argv[6])
 import os
