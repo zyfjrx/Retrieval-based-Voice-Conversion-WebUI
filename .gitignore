@@ -29,3 +29,4 @@ ffprobe.*
 *.log
 input/*
 output/*
+*.wav
