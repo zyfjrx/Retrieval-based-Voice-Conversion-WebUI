@@ -324,10 +324,10 @@ def get_hparams(init=True):
         "-te", "--total_epoch", type=int, required=True, help="total_epoch"
     )
     parser.add_argument(
-        "-pg", "--pretrainG", type=str, default="", help="Pretrained Generator path"
+        "-pg", "--pretrainG", type=str, default="assets/pretrained_v2/f0G40k.pth", help="Pretrained Generator path"
     )
     parser.add_argument(
-        "-pd", "--pretrainD", type=str, default="", help="Pretrained Discriminator path"
+        "-pd", "--pretrainD", type=str, default="assets/pretrained_v2/f0D40k.pth", help="Pretrained Discriminator path"
     )
     parser.add_argument("-g", "--gpus", type=str, default="0", help="split by -")
     parser.add_argument(
@@ -337,7 +337,7 @@ def get_hparams(init=True):
         "-e", "--experiment_dir", type=str, required=True, help="experiment dir"
     )  # -m
     parser.add_argument(
-        "-sr", "--sample_rate", type=str, required=True, help="sample rate, 32k/40k/48k"
+        "-sr", "--sample_rate", type=str, default="40k", help="sample rate, 32k/40k/48k"
     )
     parser.add_argument(
         "-sw",
@@ -347,27 +347,27 @@ def get_hparams(init=True):
         help="save the extracted model in weights directory when saving checkpoints",
     )
     parser.add_argument(
-        "-v", "--version", type=str, required=True, help="model version"
+        "-v", "--version", type=str, default="v2", help="model version"
     )
     parser.add_argument(
         "-f0",
         "--if_f0",
         type=int,
-        required=True,
+        default=1,
         help="use f0 as one of the inputs of the model, 1 or 0",
     )
     parser.add_argument(
         "-l",
         "--if_latest",
         type=int,
-        required=True,
+        default=0,
         help="if only save the latest G/D pth file, 1 or 0",
     )
     parser.add_argument(
         "-c",
         "--if_cache_data_in_gpu",
         type=int,
-        required=True,
+        default=0,
         help="if caching the dataset in GPU memory, 1 or 0",
     )
 
