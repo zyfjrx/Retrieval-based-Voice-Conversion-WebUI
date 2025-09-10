@@ -1,23 +1,23 @@
 import os
 import sys
 import logging
-
 logger = logging.getLogger(__name__)
-
 now_dir = os.getcwd()
 sys.path.append(os.path.join(now_dir))
-
 import datetime
-
 from infer.lib.train import utils
-
+from multiprocessing import cpu_count
 hps = utils.get_hparams()
 os.environ["CUDA_VISIBLE_DEVICES"] = hps.gpus.replace("-", ",")
 n_gpus = len(hps.gpus.split("-"))
 from random import randint, shuffle
-
 import torch
-
+import platform
+import numpy as np
+import faiss
+from sklearn.cluster import MiniBatchKMeans
+from dotenv import load_dotenv
+load_dotenv()
 try:
     import intel_extension_for_pytorch as ipex  # pylint: disable=import-error, unused-import
 
@@ -105,6 +105,24 @@ def main():
     os.environ["MASTER_PORT"] = str(randint(20000, 55555))
     children = []
     logger = utils.get_logger(hps.model_dir)
+
+    # step1 训练索引
+    print("step1 训练索引")
+    outside_index_root = os.getenv("outside_index_root")
+    print(f"实验目录: {hps.name}")
+    print(f"模型版本: {hps.version}")
+    print(f"外部索引目录: {outside_index_root or '未设置'}")
+    success = train_index(hps.name, hps.version, outside_index_root)
+    
+    if success:
+        print("\n索引训练成功完成！")
+    else:
+        print("\n索引训练失败！")
+        sys.exit(1)
+
+
+    # step2 训练模型
+    print("step2 训练模型")
     for i in range(n_gpus):
         subproc = mp.Process(
             target=run,
@@ -115,6 +133,8 @@ def main():
 
     for i in range(n_gpus):
         children[i].join()
+    
+
 
 
 def run(rank, n_gpus, hps, logger: logging.Logger):
@@ -633,6 +653,149 @@ def train_and_evaluate(
         )
         sleep(1)
         os._exit(2333333)
+
+
+def train_index(exp_dir1, version19="v2", outside_index_root=None):
+    """
+    训练特征索引
+    
+    Args:
+        exp_dir1: 实验目录名称
+        version19: 模型版本 ("v1" 或 "v2")
+        outside_index_root: 外部索引根目录
+        n_cpu: CPU核心数，如果为None则自动检测
+    """
+    
+    # 获取CPU核心数
+    actual_n_cpu = cpu_count()
+    print(f"使用CPU核心数: {actual_n_cpu}")
+    
+    # 设置实验目录
+    exp_dir = "logs/%s" % exp_dir1
+    os.makedirs(exp_dir, exist_ok=True)
+    # 确定特征目录
+    feature_dir = (
+        "%s/3_feature256" % exp_dir
+        if version19 == "v1"
+        else "%s/3_feature768" % exp_dir
+    )
+    
+    # 检查特征目录是否存在
+    if not os.path.exists(feature_dir):
+        print("错误: 请先进行特征提取!")
+        print(f"特征目录: {feature_dir}")
+        return False
+        
+    listdir_res = list(os.listdir(feature_dir))
+    if len(listdir_res) == 0:
+        print("错误: 请先进行特征提取！")
+        return False
+    
+    print(f"开始训练索引，找到 {len(listdir_res)} 个特征文件")
+    
+    # 加载所有特征文件
+    npys = []
+    for name in sorted(listdir_res):
+        feature_path = "%s/%s" % (feature_dir, name)
+        # print(f"加载特征文件: {feature_path}")
+        phone = np.load(feature_path)
+        npys.append(phone)
+    
+    # 合并所有特征
+    big_npy = np.concatenate(npys, 0)
+    big_npy_idx = np.arange(big_npy.shape[0])
+    np.random.shuffle(big_npy_idx)
+    big_npy = big_npy[big_npy_idx]
+    
+    print(f"特征矩阵形状: {big_npy.shape}")
+    
+    # 如果特征数量过多，使用K-means聚类降维
+    if big_npy.shape[0] > 2e5:
+        print(f"特征数量过多 ({big_npy.shape[0]})，使用K-means聚类到10k个中心点")
+        try:
+            big_npy = (
+                MiniBatchKMeans(
+                    n_clusters=10000,
+                    verbose=True,
+                    batch_size=256 * actual_n_cpu,
+                    compute_labels=False,
+                    init="random",
+                )
+                .fit(big_npy)
+                .cluster_centers_
+            )
+            print(f"K-means聚类完成，新的特征矩阵形状: {big_npy.shape}")
+        except Exception as e:
+            print(f"K-means聚类失败: {e}")
+            print(traceback.format_exc())
+    
+    # 保存总特征文件
+    total_fea_path = "%s/total_fea.npy" % exp_dir
+    np.save(total_fea_path, big_npy)
+    print(f"保存总特征文件: {total_fea_path}")
+    
+    # 计算IVF参数
+    n_ivf = min(int(16 * np.sqrt(big_npy.shape[0])), big_npy.shape[0] // 39)
+    print(f"特征维度: {256 if version19 == 'v1' else 768}, IVF聚类数: {n_ivf}")
+    
+    # 创建FAISS索引
+    index = faiss.index_factory(256 if version19 == "v1" else 768, "IVF%s,Flat" % n_ivf)
+    
+    print("开始训练索引...")
+    index_ivf = faiss.extract_index_ivf(index)
+    index_ivf.nprobe = 1
+    index.train(big_npy)
+    
+    # 保存训练后的索引
+    trained_index_path = (
+        "%s/trained_IVF%s_Flat_nprobe_%s_%s_%s.index"
+        % (exp_dir, n_ivf, index_ivf.nprobe, exp_dir1, version19)
+    )
+    faiss.write_index(index, trained_index_path)
+    print(f"保存训练索引: {trained_index_path}")
+    
+    print("添加特征到索引...")
+    batch_size_add = 8192
+    for i in range(0, big_npy.shape[0], batch_size_add):
+        index.add(big_npy[i : i + batch_size_add])
+        if i % (batch_size_add * 10) == 0:
+            print(f"已添加 {i + batch_size_add}/{big_npy.shape[0]} 个特征")
+    
+    # 保存最终索引
+    final_index_path = (
+        "%s/added_IVF%s_Flat_nprobe_%s_%s_%s.index"
+        % (exp_dir, n_ivf, index_ivf.nprobe, exp_dir1, version19)
+    )
+    faiss.write_index(index, final_index_path)
+    print(f"成功构建索引: {final_index_path}")
+    
+    # 尝试链接到外部索引目录
+    # if outside_index_root and os.path.exists(outside_index_root):
+    try:
+        link = os.link if platform.system() == "Windows" else os.symlink
+        external_index_path = (
+            "%s/%s_IVF%s_Flat_nprobe_%s_%s_%s.index"
+            % (
+                outside_index_root,
+                exp_dir1,
+                n_ivf,
+                index_ivf.nprobe,
+                exp_dir1,
+                version19,
+            )
+            )
+            # 如果目标文件已存在，先删除
+        if os.path.exists(external_index_path):
+            os.remove(external_index_path)
+            
+        link(final_index_path, external_index_path)
+        print(f"成功链接索引到外部目录: {external_index_path}")
+    except Exception as e:
+        print(f"链接索引到外部目录失败: {e}")
+    
+    print("索引训练完成！")
+    return True
+
 
 
 if __name__ == "__main__":

@@ -21,21 +21,8 @@ now_dir = os.getcwd()
 sys.path.append(now_dir)
 load_dotenv()
 
-def get_n_cpu(n_cpu=None):
-    """
-    获取CPU核心数
-    
-    Args:
-        n_cpu: 指定的CPU核心数，如果为None或0则自动检测
-    
-    Returns:
-        int: CPU核心数
-    """
-    if n_cpu is None or n_cpu == 0:
-        return cpu_count()
-    return n_cpu
 
-def train_index(exp_dir1, version19="v2", outside_index_root=None, n_cpu=None):
+def train_index(exp_dir1, version19="v2", outside_index_root=None):
     """
     训练特征索引
     
@@ -47,7 +34,7 @@ def train_index(exp_dir1, version19="v2", outside_index_root=None, n_cpu=None):
     """
     
     # 获取CPU核心数
-    actual_n_cpu = get_n_cpu(n_cpu)
+    actual_n_cpu = cpu_count()
     print(f"使用CPU核心数: {actual_n_cpu}")
     
     # 设置实验目录
@@ -77,7 +64,7 @@ def train_index(exp_dir1, version19="v2", outside_index_root=None, n_cpu=None):
     npys = []
     for name in sorted(listdir_res):
         feature_path = "%s/%s" % (feature_dir, name)
-        print(f"加载特征文件: {feature_path}")
+        # print(f"加载特征文件: {feature_path}")
         phone = np.load(feature_path)
         npys.append(phone)
     
@@ -179,24 +166,17 @@ def train_index(exp_dir1, version19="v2", outside_index_root=None, n_cpu=None):
 def main():
     parser = argparse.ArgumentParser(description="RVC训练特征索引")
     parser.add_argument("-e", "--exp_dir", required=True, help="实验目录名称")
-    parser.add_argument("-v", "--version", default="v2", choices=["v1", "v2"], help="模型版本")
-    parser.add_argument("-o", "--outside_index_root", help="外部索引根目录")
-    parser.add_argument("-c", "--n_cpu", type=int, help="CPU核心数，如果不指定则自动检测")
-    
+    parser.add_argument("-v", "--version", default="v2", choices=["v1", "v2"], help="模型版本")    
     args = parser.parse_args()
     
     # 如果没有指定外部索引目录，尝试从环境变量获取
-    outside_index_root = args.outside_index_root or os.getenv("outside_index_root")
+    outside_index_root = os.getenv("outside_index_root")
     
     print(f"实验目录: {args.exp_dir}")
     print(f"模型版本: {args.version}")
     print(f"外部索引目录: {outside_index_root or '未设置'}")
-    if args.n_cpu:
-        print(f"指定CPU核心数: {args.n_cpu}")
-    else:
-        print("CPU核心数: 自动检测")
     
-    success = train_index(args.exp_dir, args.version, outside_index_root, args.n_cpu)
+    success = train_index(args.exp_dir, args.version, outside_index_root)
     
     if success:
         print("\n索引训练成功完成！")
